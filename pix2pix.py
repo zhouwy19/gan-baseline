@@ -16,16 +16,18 @@ import time
 from models import *
 from datasets import *
 
+from tensorboardX import SummaryWriter
+
+
 import warnings
 warnings.filterwarnings("ignore")
 
 jt.flags.use_cuda = 1
 
-print("hello")
 parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--dataset_name", type=str, default="facades", help="name of the dataset")
+parser.add_argument("--dataset_name", type=str, default="flickr", help="name of the dataset")
 parser.add_argument("--output_path", type=str, default="./results/flickr")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
@@ -42,7 +44,6 @@ parser.add_argument(
 parser.add_argument("--checkpoint_interval", type=int, default=1, help="interval between model checkpoints")
 opt = parser.parse_args()
 print(opt)
-
 
 def save_image(img, path, nrow=10):
     N,C,W,H = img.shape
@@ -62,9 +63,12 @@ def save_image(img, path, nrow=10):
     if C==3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     cv2.imwrite(path,img)
+    return img
 
 os.makedirs(f"{opt.output_path}/images/%s" % opt.dataset_name, exist_ok=True)
 os.makedirs(f"{opt.output_path}/saved_models/%s" % opt.dataset_name, exist_ok=True)
+
+writer = SummaryWriter(opt.output_path)
 
 # Loss functions
 criterion_GAN = nn.BCEWithLogitsLoss()
@@ -96,24 +100,59 @@ transforms = [
     transform.ImageNormalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ]
 
-dataloader = ImageDataset("/mnt/disk/zwy/flickr/", mode="train", transforms=transforms).set_attrs(
+dataloader = ImageDataset("/data/zwy/flickr/", mode="train", transforms=transforms).set_attrs(
     batch_size=opt.batch_size,
     shuffle=True,
     num_workers=opt.n_cpu,
 )
-val_dataloader = ImageDataset("/mnt/disk/zwy/flickr/", mode="val", transforms=transforms).set_attrs(
+val_dataloader = ImageDataset("/data/zwy/flickr/", mode="val", transforms=transforms).set_attrs(
     batch_size=10,
     shuffle=False,
     num_workers=1,
 )
 
+
+# define hlagcn network
+from utils_jittor.model import resnet50hlagcn
+from utils_jittor.util import *
+
+hlagcn_model = resnet50hlagcn(num_classes=10, gcn_num=3)
+hlagcn_model, _, _ = load_checkpoint('utils_jittor/checkpoint_epoch_019.pth.tar', hlagcn_model, [], strict=True) 
+hlagcn_mean = jt.array([0.485, 0.456, 0.406]).reshape(1,-1, 1, 1)
+hlagcn_std = jt.array([0.229, 0.224, 0.225]).reshape(1,-1, 1, 1)
+hlagcn_scores = jt.arange(10).reshape(1,-1)
+best_score = 0.
+
 @jt.single_process_scope()
-def sample_images(batches_done):
-    """Saves a generated sample from the validation set"""
-    real_B, real_A = next(iter(val_dataloader))
-    fake_B = generator(real_A)
-    img_sample = np.concatenate([real_A.data, fake_B.data, real_B.data], -2)
-    save_image(img_sample, f"{opt.output_path}/images/%s/%s.png" % (opt.dataset_name, batches_done), nrow=5)
+def eval(epoch, writer):
+    global best_score
+    scores = 0.
+    for i, (real_B, real_A) in enumerate(val_dataloader):
+        fake_B = generator(real_A)
+
+        if i % 200 == 0:
+            # visual image result
+            img_sample = np.concatenate([real_A.data, fake_B.data, real_B.data], -2)
+            img = save_image(img_sample, f"{opt.output_path}/images/%s/%s_%s.png" % (opt.dataset_name, epoch, i), nrow=5)
+            writer.add_image('val/image', img.transpose(2,0,1), epoch)
+
+        # calculate hlagcn scores
+        n, _, _, _ = fake_B.shape
+        ratio = jt.ones((n,1)).float() * 4/3
+        fake_B = nn.resize(fake_B, (300,300))
+        fake_B = (fake_B + 1) / 2
+        fake_B = (fake_B - hlagcn_mean) / hlagcn_std
+        _, _, res = hlagcn_model([fake_B, ratio])
+        scores += (res * hlagcn_scores).sum().item()
+    scores /= 1000
+    if scores > best_score:
+        best_score = scores
+        generator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/generator_best_{best_score}.pkl"))
+        discriminator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/discriminator_best_{best_score}.pkl"))
+    writer.add_scalar('val/scores', scores, epoch)
+    writer.add_scalar('val/best_score', best_score, epoch)
+    print(f"\n[*] epoch: {epoch} | score: {scores} | best_score: {best_score}")
+    return scores / 1000
 
 warmup_times = -1
 run_times = 3000
@@ -125,7 +164,6 @@ cnt = 0
 # ----------
 
 prev_time = time.time()
-print("begin train")
 for epoch in range(opt.epoch, opt.n_epochs):
     for i, (real_B, real_A) in enumerate(dataloader):
         # Adversarial ground truths
@@ -145,6 +183,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
         loss_D_real = criterion_GAN(pred_real, True)
         loss_D = (loss_D_fake + loss_D_real) * 0.5
         optimizer_D.step(loss_D)
+        writer.add_scalar('train/loss_D', loss_D.item(), epoch * len(dataloader) + i)
 
         # ------------------
         #  Train Generators
@@ -156,6 +195,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
         loss_G_L1 = criterion_pixelwise(fake_B, real_B)
         loss_G = loss_G_GAN + lambda_pixel * loss_G_L1
         optimizer_G.step(loss_G)
+        writer.add_scalar('train/loss_G', loss_G.item(), epoch * len(dataloader) + i)
 
         jt.sync_all(True)
 
@@ -188,10 +228,8 @@ for epoch in range(opt.epoch, opt.n_epochs):
                     )   
                 )
 
-            # If at sample interval save image
-            if batches_done % opt.sample_interval == 0:
-                sample_images(batches_done)
+    eval(epoch, writer)
     if jt.rank == 0 and opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
         # Save model checkpoints
-        generator.save(os.path.join(f"saved_models/{opt.dataset_name}/generator_last.pkl"))
-        discriminator.save(os.path.join(f"saved_models/{opt.dataset_name}/discriminator_last.pkl"))
+        generator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/generator_last_{epoch}.pkl"))
+        discriminator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/discriminator_last_{epoch}.pkl"))
