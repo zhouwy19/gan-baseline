@@ -27,7 +27,6 @@ jt.flags.use_cuda = 1
 parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--dataset_name", type=str, default="flickr", help="name of the dataset")
 parser.add_argument("--output_path", type=str, default="./results/flickr")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
@@ -65,8 +64,8 @@ def save_image(img, path, nrow=10):
     cv2.imwrite(path,img)
     return img
 
-os.makedirs(f"{opt.output_path}/images/%s" % opt.dataset_name, exist_ok=True)
-os.makedirs(f"{opt.output_path}/saved_models/%s" % opt.dataset_name, exist_ok=True)
+os.makedirs(f"{opt.output_path}/images/", exist_ok=True)
+os.makedirs(f"{opt.output_path}/saved_models/", exist_ok=True)
 
 writer = SummaryWriter(opt.output_path)
 
@@ -86,8 +85,8 @@ discriminator = Discriminator()
 
 if opt.epoch != 0:
     # Load pretrained models
-    generator.load(f"{opt.output_path}/saved_models/%s/generator_last.pkl" % (opt.dataset_name))
-    discriminator.load(f"{opt.output_path}/saved_models/%s/discriminator_last.pkl" % (opt.dataset_name))
+    generator.load(f"{opt.output_path}/saved_models/generator_{opt.epoch}.pkl")
+    discriminator.load(f"{opt.output_path}/saved_models/discriminator_{opt.epoch}.pkl")
 
 # Optimizers
 optimizer_G = jt.optim.Adam(generator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
@@ -100,59 +99,34 @@ transforms = [
     transform.ImageNormalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ]
 
-dataloader = ImageDataset("/data/zwy/flickr/", mode="train", transforms=transforms).set_attrs(
+dataloader = ImageDataset("/mnt/disk/zwy/data/flickr/", mode="train", transforms=transforms).set_attrs(
     batch_size=opt.batch_size,
     shuffle=True,
     num_workers=opt.n_cpu,
 )
-val_dataloader = ImageDataset("/data/zwy/flickr/", mode="val", transforms=transforms).set_attrs(
+val_dataloader = ImageDataset("/mnt/disk/zwy/data/flickr/", mode="val", transforms=transforms).set_attrs(
     batch_size=10,
     shuffle=False,
     num_workers=1,
 )
 
-
-# define hlagcn network
-from utils_jittor.model import resnet50hlagcn
-from utils_jittor.util import *
-
-hlagcn_model = resnet50hlagcn(num_classes=10, gcn_num=3)
-hlagcn_model, _, _ = load_checkpoint('utils_jittor/checkpoint_epoch_019.pth.tar', hlagcn_model, [], strict=True) 
-hlagcn_mean = jt.array([0.485, 0.456, 0.406]).reshape(1,-1, 1, 1)
-hlagcn_std = jt.array([0.229, 0.224, 0.225]).reshape(1,-1, 1, 1)
-hlagcn_scores = jt.arange(10).reshape(1,-1)
-best_score = 0.
-
 @jt.single_process_scope()
 def eval(epoch, writer):
-    global best_score
-    scores = 0.
+    cnt = 1
+    os.makedirs(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}", exist_ok=True)
     for i, (real_B, real_A) in enumerate(val_dataloader):
         fake_B = generator(real_A)
-
-        if i % 200 == 0:
+        
+        if i == 0:
             # visual image result
             img_sample = np.concatenate([real_A.data, fake_B.data, real_B.data], -2)
-            img = save_image(img_sample, f"{opt.output_path}/images/%s/%s_%s.png" % (opt.dataset_name, epoch, i), nrow=5)
+            img = save_image(img_sample, f"{opt.output_path}/images/epoch_{epoch}_sample.png", nrow=5)
             writer.add_image('val/image', img.transpose(2,0,1), epoch)
 
-        # calculate hlagcn scores
-        n, _, _, _ = fake_B.shape
-        ratio = jt.ones((n,1)).float() * 4/3
-        fake_B = nn.resize(fake_B, (300,300))
-        fake_B = (fake_B + 1) / 2
-        fake_B = (fake_B - hlagcn_mean) / hlagcn_std
-        _, _, res = hlagcn_model([fake_B, ratio])
-        scores += (res * hlagcn_scores).sum().item()
-    scores /= 1000
-    if scores > best_score:
-        best_score = scores
-        generator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/generator_best_{best_score}.pkl"))
-        discriminator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/discriminator_best_{best_score}.pkl"))
-    writer.add_scalar('val/scores', scores, epoch)
-    writer.add_scalar('val/best_score', best_score, epoch)
-    print(f"\n[*] epoch: {epoch} | score: {scores} | best_score: {best_score}")
-    return scores / 1000
+        fake_B = ((fake_B + 1) / 2 * 255).numpy().astype('uint8')
+        for idx in range(fake_B.shape[0]):
+            cv2.imwrite(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}/{cnt}.jpg", fake_B[idx].transpose(1,2,0))
+            cnt += 1
 
 warmup_times = -1
 run_times = 3000
@@ -228,8 +202,8 @@ for epoch in range(opt.epoch, opt.n_epochs):
                     )   
                 )
 
-    eval(epoch, writer)
     if jt.rank == 0 and opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
+        eval(epoch, writer)
         # Save model checkpoints
-        generator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/generator_last_{epoch}.pkl"))
-        discriminator.save(os.path.join(f"{opt.output_path}/saved_models/{opt.dataset_name}/discriminator_last_{epoch}.pkl"))
+        generator.save(os.path.join(f"{opt.output_path}/saved_models/generator_{epoch}.pkl"))
+        discriminator.save(os.path.join(f"{opt.output_path}/saved_models/discriminator_{epoch}.pkl"))

@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES="0" python pix2pix.py --output_path ./results/single_gpu --batch_size 32
