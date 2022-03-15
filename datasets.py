@@ -12,21 +12,24 @@ class ImageDataset(Dataset):
         super().__init__()
         self.transforms = transform.Compose(transforms)
         self.mode = mode
-        self.files = sorted(glob.glob(os.path.join(root, mode, "imgs") + "/*.*"))
+        if self.mode == 'train':
+            self.files = sorted(glob.glob(os.path.join(root, mode, "imgs") + "/*.*"))
         self.labels = sorted(glob.glob(os.path.join(root, mode, "labels") + "/*.*"))
-        self.set_attrs(total_len=len(self.files))
+        self.set_attrs(total_len=len(self.labels))
         print(f"from {mode} split load {self.total_len} images.")
 
     def __getitem__(self, index):
-        img_A = Image.open(self.files[index % len(self.files)])
-        img_B = Image.open(self.labels[index % len(self.files)])
+        img_B = Image.open(self.labels[index % len(self.labels)])
         img_B = Image.fromarray(np.array(img_B).astype("uint8")[:, :, np.newaxis].repeat(3,2))
 
-        if self.mode == "train" and np.random.random() < 0.5:
-            img_A = Image.fromarray(np.array(img_A)[:, ::-1, :], "RGB")
-            img_B = Image.fromarray(np.array(img_B)[:, ::-1, :], "RGB")
-
-        img_A = self.transforms(img_A)
+        if self.mode == "train":
+            img_A = Image.open(self.files[index % len(self.files)])
+            if np.random.random() < 0.5:
+                img_A = Image.fromarray(np.array(img_A)[:, ::-1, :], "RGB")
+                img_B = Image.fromarray(np.array(img_B)[:, ::-1, :], "RGB")
+            img_A = self.transforms(img_A)
+        else:
+            img_A = np.empty([1])
         img_B = self.transforms(img_B)
 
         return img_A, img_B

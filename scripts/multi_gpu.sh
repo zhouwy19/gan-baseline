@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES="0,1,2,3" mpirun -np 4 python pix2pix.py --output_path ./results/multi_gpu --batch_size 128
+CUDA_VISIBLE_DEVICES="0,1,2,3" mpirun -np 4 python pix2pix.py --output_path ./results/multi_gpu --batch_size 128 --data_path /mnt/disk2/zwy/nas/jittor_landscape_200k

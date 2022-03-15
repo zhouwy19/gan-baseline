@@ -18,7 +18,6 @@ from datasets import *
 
 from tensorboardX import SummaryWriter
 
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -27,6 +26,7 @@ jt.flags.use_cuda = 1
 parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--data_path", type=str, default="./jittor_landscape_200k")
 parser.add_argument("--output_path", type=str, default="./results/flickr")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
@@ -99,12 +99,12 @@ transforms = [
     transform.ImageNormalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ]
 
-dataloader = ImageDataset("/mnt/disk/zwy/data/flickr/", mode="train", transforms=transforms).set_attrs(
+dataloader = ImageDataset(opt.data_path, mode="train", transforms=transforms).set_attrs(
     batch_size=opt.batch_size,
     shuffle=True,
     num_workers=opt.n_cpu,
 )
-val_dataloader = ImageDataset("/mnt/disk/zwy/data/flickr/", mode="val", transforms=transforms).set_attrs(
+val_dataloader = ImageDataset(opt.data_path, mode="val", transforms=transforms).set_attrs(
     batch_size=10,
     shuffle=False,
     num_workers=1,
@@ -114,12 +114,12 @@ val_dataloader = ImageDataset("/mnt/disk/zwy/data/flickr/", mode="val", transfor
 def eval(epoch, writer):
     cnt = 1
     os.makedirs(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}", exist_ok=True)
-    for i, (real_B, real_A) in enumerate(val_dataloader):
+    for i, (_, real_A) in enumerate(val_dataloader):
         fake_B = generator(real_A)
         
         if i == 0:
             # visual image result
-            img_sample = np.concatenate([real_A.data, fake_B.data, real_B.data], -2)
+            img_sample = np.concatenate([real_A.data, fake_B.data], -2)
             img = save_image(img_sample, f"{opt.output_path}/images/epoch_{epoch}_sample.png", nrow=5)
             writer.add_image('val/image', img.transpose(2,0,1), epoch)
 
@@ -139,6 +139,7 @@ cnt = 0
 
 prev_time = time.time()
 for epoch in range(opt.epoch, opt.n_epochs):
+    eval(epoch, writer)
     for i, (real_B, real_A) in enumerate(dataloader):
         # Adversarial ground truths
         valid = jt.ones([real_A.shape[0], 1]).stop_grad()
