@@ -125,7 +125,7 @@ def eval(epoch, writer):
 
         fake_B = ((fake_B + 1) / 2 * 255).numpy().astype('uint8')
         for idx in range(fake_B.shape[0]):
-            cv2.imwrite(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}/{cnt}.jpg", fake_B[idx].transpose(1,2,0))
+            cv2.imwrite(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}/{cnt}.jpg", fake_B[idx].transpose(1,2,0)[:,:,::-1])
             cnt += 1
 
 warmup_times = -1
