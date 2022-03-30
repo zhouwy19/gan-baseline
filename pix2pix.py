@@ -104,29 +104,29 @@ dataloader = ImageDataset(opt.data_path, mode="train", transforms=transforms).se
     shuffle=True,
     num_workers=opt.n_cpu,
 )
-val_dataloader = ImageDataset(opt.data_path, mode="val", transforms=transforms).set_attrs(
-    batch_size=10,
-    shuffle=False,
-    num_workers=1,
-)
+# val_dataloader = ImageDataset(opt.data_path, mode="val", transforms=transforms).set_attrs(
+#     batch_size=10,
+#     shuffle=False,
+#     num_workers=1,
+# )
 
-@jt.single_process_scope()
-def eval(epoch, writer):
-    cnt = 1
-    os.makedirs(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}", exist_ok=True)
-    for i, (_, real_A) in enumerate(val_dataloader):
-        fake_B = generator(real_A)
+# @jt.single_process_scope()
+# def eval(epoch, writer):
+#     cnt = 1
+#     os.makedirs(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}", exist_ok=True)
+#     for i, (_, real_A, photo_id) in enumerate(val_dataloader):
+#         fake_B = generator(real_A)
         
-        if i == 0:
-            # visual image result
-            img_sample = np.concatenate([real_A.data, fake_B.data], -2)
-            img = save_image(img_sample, f"{opt.output_path}/images/epoch_{epoch}_sample.png", nrow=5)
-            writer.add_image('val/image', img.transpose(2,0,1), epoch)
+#         if i == 0:
+#             # visual image result
+#             img_sample = np.concatenate([real_A.data, fake_B.data], -2)
+#             img = save_image(img_sample, f"{opt.output_path}/images/epoch_{epoch}_sample.png", nrow=5)
+#             writer.add_image('val/image', img.transpose(2,0,1), epoch)
 
-        fake_B = ((fake_B + 1) / 2 * 255).numpy().astype('uint8')
-        for idx in range(fake_B.shape[0]):
-            cv2.imwrite(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}/{cnt}.jpg", fake_B[idx].transpose(1,2,0)[:,:,::-1])
-            cnt += 1
+#         fake_B = ((fake_B + 1) / 2 * 255).numpy().astype('uint8')
+#         for idx in range(fake_B.shape[0]):
+#             cv2.imwrite(f"{opt.output_path}/images/test_fake_imgs/epoch_{epoch}/{photo_id[idx]}.jpg", fake_B[idx].transpose(1,2,0)[:,:,::-1])
+#             cnt += 1
 
 warmup_times = -1
 run_times = 3000
@@ -139,8 +139,7 @@ cnt = 0
 
 prev_time = time.time()
 for epoch in range(opt.epoch, opt.n_epochs):
-    eval(epoch, writer)
-    for i, (real_B, real_A) in enumerate(dataloader):
+    for i, (real_B, real_A, _) in enumerate(dataloader):
         # Adversarial ground truths
         valid = jt.ones([real_A.shape[0], 1]).stop_grad()
         fake = jt.zeros([real_A.shape[0], 1]).stop_grad()
@@ -204,7 +203,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
                 )
 
     if jt.rank == 0 and opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
-        eval(epoch, writer)
+        # eval(epoch, writer)
         # Save model checkpoints
         generator.save(os.path.join(f"{opt.output_path}/saved_models/generator_{epoch}.pkl"))
         discriminator.save(os.path.join(f"{opt.output_path}/saved_models/discriminator_{epoch}.pkl"))

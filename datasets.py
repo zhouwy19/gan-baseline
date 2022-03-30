@@ -19,7 +19,9 @@ class ImageDataset(Dataset):
         print(f"from {mode} split load {self.total_len} images.")
 
     def __getitem__(self, index):
-        img_B = Image.open(self.labels[index % len(self.labels)])
+        label_path = self.labels[index % len(self.labels)]
+        photo_id = label_path.split('/')[-1][:-4]
+        img_B = Image.open(label_path)
         img_B = Image.fromarray(np.array(img_B).astype("uint8")[:, :, np.newaxis].repeat(3,2))
 
         if self.mode == "train":
@@ -32,4 +34,4 @@ class ImageDataset(Dataset):
             img_A = np.empty([1])
         img_B = self.transforms(img_B)
 
-        return img_A, img_B
+        return img_A, img_B, photo_id

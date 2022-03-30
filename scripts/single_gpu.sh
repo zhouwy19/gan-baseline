@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES="0" python pix2pix.py --output_path ./results/single_gpu --batch_size 32 --data_path /mnt/disk2/zwy/nas/jittor_landscape_200k
+CUDA_VISIBLE_DEVICES="0" python pix2pix.py --output_path ./results/single_gpu --batch_size 32 --data_path path_to_your_data
